@@ -104,6 +104,7 @@ CI_ENABLE_METAL_GPU = "0"
 "dtb_node" = [{ "path" = "/reserved-memory/splash_region", "props" = [{ "name" = "label", "type" = "s", "value" = "cont_splash_region" }, { "name" = "reg", "type" = "x", "value" = ["0x0", "0xb8000000", "0x0", "0x2b00000"] }] }]
 
 
+
 ["device_tree"]
 "source" = "device:dts/sheng.dts"
 "include_dirs" = ["soc:dts"]
