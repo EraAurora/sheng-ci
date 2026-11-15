@@ -1,8 +1,8 @@
-name: sheng kernel
+name: sheng kernel and payload
 
-# Builds and prelinks the XNU kernel for an OS profile on a macOS runner that has Xcode, and
-# uploads the kernel Mach-O. Everything else (userdata, Data seed, payload, boot image) is made
-# on the Intel host: see the run instructions in the device repository's README.
+# Builds the XNU kernel, the boot payload, the firmware and the boot image for an OS profile on a
+# macOS runner that has Xcode, and uploads them. The Data seed (device/seed/data.dbr) is the one
+# this device's userdata image carries; the unique chip id seeds the platform identity.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +18,10 @@ on:
         description: Xcode version of the macos-26 image (/Applications/Xcode_<version>.app)
         required: true
         default: "26.6"
+      chip_id:
+        description: Platform seed (/chosen/unique-chip-id, 8 bytes hex)
+        required: true
+        default: "b714917c"
 
 permissions:
   contents: read
@@ -32,13 +36,14 @@ defaults:
     shell: bash
 
 jobs:
-  kernel:
+  build:
     runs-on: macos-26
     timeout-minutes: 360
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
       OS_PROFILE: ${{ inputs.os }}
       DEFCONFIG: ${{ inputs.defconfig }}
+      UNIXNU_UNIQUE_CHIP_ID: ${{ inputs.chip_id }}
     steps:
       - name: Check out UniXNU
         uses: actions/checkout@v5
@@ -53,6 +58,13 @@ jobs:
           path: device
           persist-credentials: false
 
+      - name: Check out the firmware repository
+        uses: actions/checkout@v5
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          persist-credentials: false
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -61,17 +73,18 @@ jobs:
         run: |
           [ -d "$DEVELOPER_DIR" ] || { echo "::error::no Xcode at $DEVELOPER_DIR"; exit 1; }
           [ -f "device/configs/$DEFCONFIG" ] || { echo "::error::device/configs/$DEFCONFIG missing"; exit 1; }
+          [ -f device/seed/data.dbr ] || { echo "::error::device/seed/data.dbr (the Data seed) missing"; exit 1; }
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           df -h "$GITHUB_WORKSPACE"
 
       - name: Install host tools
         run: |
-          brew install llvm lld mtools dtc
-          if ! command -v unifdef >/dev/null; then
-            brew install unifdef
-            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
-          fi
+          brew install llvm lld mtools dtc glslang shaderc spirv-tools rustup unifdef
+          # keg-only formulas: llvm-as for the Metal bridge fixture, glslc + spirv-val for the smoke shaders
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup component add rust-src --toolchain 1.98.0
 
       - name: Select the configuration
         working-directory: UniXNU
@@ -91,20 +104,30 @@ jobs:
           ./unixnu fetch --os "$OS_PROFILE"
           ./unixnu ipsw fetch --os "$OS_PROFILE"
 
-      - name: Build kernel
+      - name: Build kernel and payload
         working-directory: UniXNU
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./unixnu build kernel --os "$OS_PROFILE"
+          RUSTUP_TOOLCHAIN: "1.98.0"
+        run: |
+          ./unixnu build kernel payload --os "$OS_PROFILE" \
+            --data-ramdisk ../device/seed/data.dbr --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID"
 
-      - name: Upload the prelinked kernel
+      - name: Build firmware and the boot image
+        working-directory: UniXNU
+        run: |
+          ./unixnu build firmware --os "$OS_PROFILE" --uefi ../uefi-sheng
+          ./unixnu bootimg --os "$OS_PROFILE" --uefi ../uefi-sheng \
+            --dtb "out/sheng/$OS_PROFILE/sheng_macos/tree/build/sheng/sheng.dtb"
+
+      - name: Upload the build
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-macho
+          name: sheng-macos27-images
           path: |
             UniXNU/out/**/kernel/kernel.macho
-            UniXNU/out/**/kernel/*.json
-            UniXNU/out/**/prelink/*.json
+            UniXNU/out/**/payload/**
+            UniXNU/out/**/boot/**
           if-no-files-found: error
 
       - name: Upload the logs
