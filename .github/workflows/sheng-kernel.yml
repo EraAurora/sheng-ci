@@ -108,6 +108,12 @@ jobs:
           ./unixnu fetch --os "$OS_PROFILE"
           ./unixnu ipsw fetch --os "$OS_PROFILE"
 
+      - name: Fetch the WiFi sources
+        working-directory: device/drivers/Ath12kWifi
+        # The payload's WiFi userland is built before the kernel step, which is what fetches these
+        # otherwise; the kernel's ath12k archive reuses the same checkout.
+        run: python3 tools/fetch-sources.py
+
       - name: Build kernel and payload
         working-directory: UniXNU
         env:
