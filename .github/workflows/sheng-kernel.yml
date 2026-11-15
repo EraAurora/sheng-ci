@@ -119,9 +119,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RUSTUP_TOOLCHAIN: "1.98.0"
+          # the payload's panic screen uses the firmware's font header
+          UNIXNU_UEFI: ${{ github.workspace }}/uefi-sheng
         run: |
           ./unixnu build kernel payload --os "$OS_PROFILE" \
             --data-ramdisk ../device/seed/data.dbr --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID"
+
+      - name: Upload the kernel even when the payload step fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-macho
+          path: UniXNU/out/**/kernel/kernel.macho
+          if-no-files-found: ignore
 
       - name: Build firmware and the boot image
         working-directory: UniXNU
