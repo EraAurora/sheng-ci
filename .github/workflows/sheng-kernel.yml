@@ -81,6 +81,8 @@ jobs:
       - name: Install host tools
         run: |
           brew install llvm lld mtools dtc glslang shaderc spirv-tools rustup unifdef
+          # AEA keys of the macOS restore image (payload/userdata members)
+          brew install blacktop/tap/ipsw
           # keg-only formulas: llvm-as for the Metal bridge fixture, glslc + spirv-val for the smoke shaders
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           rustup toolchain install 1.98.0 --profile minimal
