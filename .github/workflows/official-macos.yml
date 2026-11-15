@@ -7,22 +7,27 @@ on:
   workflow_dispatch:
     inputs:
       os:
-        description: OS profile shorthand
+        description: OS profile (shorthand or profile name)
         required: true
-        default: macos-27
+        default: macos-27.3-26C5035r
       unixnu_ref:
         description: UniXNU commit to build with
         required: true
-        default: 82b847c4ac3f68a57024b3082ffa3a03442defd9
+        default: main
       chip_id:
         description: Platform seed (/chosen/unique-chip-id, 8 bytes hex)
         required: true
         default: "b714917c"
+      cache_version:
+        description: Bump to discard every cache below
+        required: true
+        default: "1"
 
 permissions:
   contents: read
 
 env:
+  CACHE_VERSION: ${{ inputs.cache_version }}
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   HOMEBREW_NO_ENV_HINTS: 1
@@ -65,16 +70,83 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Cache Homebrew formulae
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/homebrew/Cellar
+            /opt/homebrew/opt
+            /opt/homebrew/Caskroom
+            ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            brew-${{ runner.os }}-
+
+      - name: Cache the Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+            ~/.cargo/registry
+          key: rust-${{ runner.os }}-1.98.0-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.0-
+
       - name: tools
         run: |
-          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          for formula in dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup unifdef; do
+            brew list --versions "$formula" >/dev/null 2>&1 || brew install "$formula"
+          done
+          brew list --versions ipsw >/dev/null 2>&1 || brew install blacktop/tap/ipsw
           {
             echo "$HOME/.cargo/bin"
             echo "$(brew --prefix llvm)/bin"
             echo "$(brew --prefix lld)/bin"
             echo "$(brew --prefix bison)/bin"
           } >> "$GITHUB_PATH"
-          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+          if ! rustup toolchain list | grep -q '^1\.98\.0'; then
+            rustup toolchain install 1.98.0 --profile minimal
+          fi
+          rustup component list --toolchain 1.98.0 --installed | grep -q rust-src || \
+            rustup component add rust-src --toolchain 1.98.0
+
+      - name: Cache the fetched sources
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/feeds
+          key: feeds-${{ runner.os }}-${{ hashFiles('device/unixnu.lock') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            feeds-${{ runner.os }}-
+
+      - name: Cache the IPSW members
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/ipsw
+          key: ipsw-${{ runner.os }}-${{ inputs.os }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ipsw-${{ runner.os }}-${{ inputs.os }}-
+
+      - name: Cache the ath12k sources
+        uses: actions/cache@v4
+        with:
+          path: device/drivers/Ath12kWifi/deps
+          key: ath12k-${{ runner.os }}-${{ hashFiles('device/drivers/Ath12kWifi/tools/source-lock.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ath12k-${{ runner.os }}-
+
+      - name: Cache Turnip and the Metal bridge
+        uses: actions/cache@v4
+        with:
+          path: |
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/mesa-work
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/mesa-venv
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/gpu-reference
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/build/mesa-tu-macos27
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/build/adreno-metal-bridge
+          key: mesa-${{ runner.os }}-${{ hashFiles('UniXNU/scripts/data/adreno-compiler-inputs.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            mesa-${{ runner.os }}-
 
       - name: vendor files and WiFi sources
         working-directory: device
