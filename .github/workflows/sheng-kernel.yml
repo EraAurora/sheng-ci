@@ -1,0 +1,112 @@
+name: sheng kernel
+
+# Builds and prelinks the XNU kernel for an OS profile on a macOS runner that has Xcode, and
+# uploads the kernel Mach-O. Everything else (userdata, Data seed, payload, boot image) is made
+# on the Intel host: see the run instructions in the device repository's README.
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: OS profile
+        required: true
+        default: macos-27.3-26C5035r
+      defconfig:
+        description: Defconfig name (configs/ of this repository)
+        required: true
+        default: sheng_macos_defconfig
+      xcode:
+        description: Xcode version of the macos-26 image (/Applications/Xcode_<version>.app)
+        required: true
+        default: "26.6"
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  kernel:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
+      OS_PROFILE: ${{ inputs.os }}
+      DEFCONFIG: ${{ inputs.defconfig }}
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@v5
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+          persist-credentials: false
+
+      - name: Check out the device repository
+        uses: actions/checkout@v5
+        with:
+          path: device
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Check the inputs
+        run: |
+          [ -d "$DEVELOPER_DIR" ] || { echo "::error::no Xcode at $DEVELOPER_DIR"; exit 1; }
+          [ -f "device/configs/$DEFCONFIG" ] || { echo "::error::device/configs/$DEFCONFIG missing"; exit 1; }
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Install host tools
+        run: |
+          brew install llvm lld mtools dtc
+          if ! command -v unifdef >/dev/null; then
+            brew install unifdef
+            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Select the configuration
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig "$DEFCONFIG" -D ../device --os "$OS_PROFILE"
+          ./unixnu status --os "$OS_PROFILE"
+
+      - name: Fetch sources and the IPSW members
+        working-directory: UniXNU
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./unixnu fetch --os "$OS_PROFILE"
+          ./unixnu ipsw fetch --os "$OS_PROFILE"
+
+      - name: Build kernel
+        working-directory: UniXNU
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./unixnu build kernel --os "$OS_PROFILE"
+
+      - name: Upload the prelinked kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-macho
+          path: |
+            UniXNU/out/**/kernel/kernel.macho
+            UniXNU/out/**/kernel/*.json
+            UniXNU/out/**/prelink/*.json
+          if-no-files-found: error
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: UniXNU/out/**/logs/*.log
+          if-no-files-found: ignore
