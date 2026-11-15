@@ -1,8 +1,16 @@
 name: sheng kernel and payload
 
 # Builds the XNU kernel, the boot payload, the firmware and the boot image for an OS profile on a
-# macOS runner that has Xcode, and uploads them. The Data seed (device/seed/data.dbr) is the one
-# this device's userdata image carries; the unique chip id seeds the platform identity.
+# macOS runner that has Xcode, and uploads them. Works for any UniXNU device repository: pass
+# device_repository/defconfig/os for another board.
+#
+# Every heavy input is cached, so a re-run only recompiles what changed:
+#   brew     the installed formulae (llvm/lld/glslang/shaderc/spirv-tools/...)
+#   rust     the pinned 1.98.0 toolchain + rust-src the Metal bridge builds with
+#   feeds    UniXNU/out/feeds: the fetched Apple and Mu_Basecore trees (keyed by unixnu.lock)
+#   ipsw     UniXNU/out/ipsw: kernelcache, device tree and trust caches (keyed by the OS profile)
+#   ath12k   the sparse linux/freebsd checkouts (keyed by the Ath12kWifi source lock)
+#   mesa     Turnip + metal2vulkan build trees (keyed by the pinned compiler inputs)
 on:
   workflow_dispatch:
     inputs:
@@ -11,17 +19,29 @@ on:
         required: true
         default: macos-27.3-26C5035r
       defconfig:
-        description: Defconfig name (configs/ of this repository)
+        description: Defconfig name (configs/ of the device repository)
         required: true
         default: sheng_macos_defconfig
+      device_repository:
+        description: Device repository as owner/name
+        required: true
+        default: WorldAurora/UniXNU-sheng
+      uefi_repository:
+        description: UEFI repository as owner/name
+        required: true
+        default: UniXNU/uefi-sheng
       xcode:
         description: Xcode version of the macos-26 image (/Applications/Xcode_<version>.app)
         required: true
         default: "26.6"
       chip_id:
-        description: Platform seed (/chosen/unique-chip-id, 8 bytes hex)
-        required: true
+        description: Platform seed (/chosen/unique-chip-id, 8 bytes hex); empty skips the payload
+        required: false
         default: "b714917c"
+      cache_version:
+        description: Bump to discard every cache below
+        required: true
+        default: "1"
 
 permissions:
   contents: read
@@ -30,6 +50,7 @@ env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
   HOMEBREW_NO_ENV_HINTS: 1
+  CACHE_VERSION: ${{ inputs.cache_version }}
 
 defaults:
   run:
@@ -55,13 +76,14 @@ jobs:
       - name: Check out the device repository
         uses: actions/checkout@v5
         with:
+          repository: ${{ inputs.device_repository }}
           path: device
           persist-credentials: false
 
       - name: Check out the firmware repository
         uses: actions/checkout@v5
         with:
-          repository: UniXNU/uefi-sheng
+          repository: ${{ inputs.uefi_repository }}
           path: uefi-sheng
           persist-credentials: false
 
@@ -78,17 +100,47 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           df -h "$GITHUB_WORKSPACE"
 
+      - name: Cache Homebrew formulae
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/homebrew/Cellar
+            /opt/homebrew/opt
+            /opt/homebrew/Caskroom
+            ~/Library/Caches/Homebrew
+          key: brew-${{ runner.os }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            brew-${{ runner.os }}-
+
+      - name: Cache the Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+            ~/.cargo/registry
+          key: rust-${{ runner.os }}-1.98.0-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.98.0-
+
       - name: Install host tools
         run: |
-          brew install llvm lld mtools dtc glslang shaderc spirv-tools rustup unifdef bison
-          # AEA keys of the macOS restore image (payload/userdata members)
-          brew install blacktop/tap/ipsw
-          # keg-only formulas: llvm-as for the Metal bridge fixture, glslc + spirv-val for the smoke shaders
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-          # Mesa's ir3 parser needs bison --counterexamples, which the image's bison 2.3 lacks
-          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
-          rustup toolchain install 1.98.0 --profile minimal
-          rustup component add rust-src --toolchain 1.98.0
+          # formulae restored from the cache are already installed; only the missing ones are built
+          for formula in dtc llvm lld mtools glslang shaderc spirv-tools rustup unifdef bison; do
+            brew list --versions "$formula" >/dev/null 2>&1 || brew install "$formula"
+          done
+          brew list --versions ipsw >/dev/null 2>&1 || brew install blacktop/tap/ipsw
+          {
+            echo "$HOME/.cargo/bin"
+            echo "$(brew --prefix llvm)/bin"
+            echo "$(brew --prefix lld)/bin"
+            echo "$(brew --prefix bison)/bin"
+          } >> "$GITHUB_PATH"
+          if ! rustup toolchain list | grep -q '^1\.98\.0'; then
+            rustup toolchain install 1.98.0 --profile minimal
+          fi
+          rustup component list --toolchain 1.98.0 --installed | grep -q rust-src || \
+            rustup component add rust-src --toolchain 1.98.0
 
       - name: Select the configuration
         working-directory: UniXNU
@@ -96,9 +148,37 @@ jobs:
           ./unixnu defconfig "$DEFCONFIG" -D ../device --os "$OS_PROFILE"
           ./unixnu status --os "$OS_PROFILE"
 
+      - name: Cache the fetched sources
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/feeds
+          key: feeds-${{ runner.os }}-${{ hashFiles('device/unixnu.lock') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            feeds-${{ runner.os }}-
+
+      - name: Cache the IPSW members
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/ipsw
+          key: ipsw-${{ runner.os }}-${{ inputs.os }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ipsw-${{ runner.os }}-${{ inputs.os }}-
+
+      - name: Cache the ath12k sources
+        uses: actions/cache@v4
+        with:
+          path: device/drivers/Ath12kWifi/deps
+          key: ath12k-${{ runner.os }}-${{ hashFiles('device/drivers/Ath12kWifi/tools/source-lock.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ath12k-${{ runner.os }}-
+
       - name: Extract the pinned vendor files
         working-directory: device
-        run: python3 scripts/extract-files.py
+        run: |
+          python3 scripts/extract-files.py
+          if [ -f drivers/Ath12kWifi/tools/fetch-sources.py ]; then
+            python3 drivers/Ath12kWifi/tools/fetch-sources.py
+          fi
 
       - name: Fetch sources and the IPSW members
         working-directory: UniXNU
@@ -108,11 +188,19 @@ jobs:
           ./unixnu fetch --os "$OS_PROFILE"
           ./unixnu ipsw fetch --os "$OS_PROFILE"
 
-      - name: Fetch the WiFi sources
-        working-directory: device/drivers/Ath12kWifi
-        # The payload's WiFi userland is built before the kernel step, which is what fetches these
-        # otherwise; the kernel's ath12k archive reuses the same checkout.
-        run: python3 tools/fetch-sources.py
+      - name: Cache Turnip and the Metal bridge
+        uses: actions/cache@v4
+        with:
+          path: |
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/mesa-work
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/mesa-venv
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/.cache/gpu-reference
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/build/mesa-tu-macos27
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/build/mesa-tu-ios27
+            UniXNU/out/sheng/${{ inputs.os }}/sheng_macos/tree/build/adreno-metal-bridge
+          key: mesa-${{ runner.os }}-${{ hashFiles('UniXNU/scripts/data/adreno-compiler-inputs.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            mesa-${{ runner.os }}-
 
       - name: Build kernel and payload
         working-directory: UniXNU
@@ -122,8 +210,11 @@ jobs:
           # the payload's panic screen uses the firmware's font header
           UNIXNU_UEFI: ${{ github.workspace }}/uefi-sheng
         run: |
-          ./unixnu build kernel payload --os "$OS_PROFILE" \
-            --data-ramdisk ../device/seed/data.dbr --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID"
+          args=(kernel)
+          if [ -n "$UNIXNU_UNIQUE_CHIP_ID" ]; then
+            args+=(payload --data-ramdisk ../device/seed/data.dbr --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID")
+          fi
+          ./unixnu build "${args[@]}" --os "$OS_PROFILE"
 
       - name: Upload the kernel even when the payload step fails
         if: always()
@@ -134,6 +225,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Build firmware and the boot image
+        if: inputs.chip_id != ''
         working-directory: UniXNU
         run: |
           ./unixnu build firmware --os "$OS_PROFILE" --uefi ../uefi-sheng
@@ -141,6 +233,7 @@ jobs:
             --dtb "out/sheng/$OS_PROFILE/sheng_macos/tree/build/sheng/sheng.dtb"
 
       - name: Upload the build
+        if: always() && inputs.chip_id != ''
         uses: actions/upload-artifact@v4
         with:
           name: sheng-macos27-images
