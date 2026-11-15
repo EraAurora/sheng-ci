@@ -78,6 +78,7 @@ jobs:
         with:
           repository: ${{ inputs.device_repository }}
           path: device
+          submodules: recursive
           persist-credentials: false
 
       - name: Check out the firmware repository
@@ -174,11 +175,7 @@ jobs:
 
       - name: Extract the pinned vendor files
         working-directory: device
-        run: |
-          python3 scripts/extract-files.py
-          if [ -f drivers/Ath12kWifi/tools/fetch-sources.py ]; then
-            python3 drivers/Ath12kWifi/tools/fetch-sources.py
-          fi
+        run: python3 scripts/extract-files.py
 
       - name: Fetch sources and the IPSW members
         working-directory: UniXNU
@@ -187,6 +184,12 @@ jobs:
         run: |
           ./unixnu fetch --os "$OS_PROFILE"
           ./unixnu ipsw fetch --os "$OS_PROFILE"
+
+      - name: Fetch the ath12k sources
+        # after unixnu fetch, which initialises the device repository's submodules; the payload's
+        # WiFi userland is built before the kernel step that would otherwise fetch them
+        working-directory: device/drivers/Ath12kWifi
+        run: python3 tools/fetch-sources.py
 
       - name: Cache Turnip and the Metal bridge
         uses: actions/cache@v4
