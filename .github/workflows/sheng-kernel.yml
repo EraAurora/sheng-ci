@@ -79,6 +79,10 @@ jobs:
           ./unixnu defconfig "$DEFCONFIG" -D ../device --os "$OS_PROFILE"
           ./unixnu status --os "$OS_PROFILE"
 
+      - name: Extract the pinned vendor files
+        working-directory: device
+        run: python3 scripts/extract-files.py
+
       - name: Fetch sources and the IPSW members
         working-directory: UniXNU
         env:
