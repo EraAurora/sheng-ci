@@ -1,0 +1,120 @@
+name: official macOS package
+
+# The project's own entry point: scripts/package.sh (unixnu release) on a macOS runner, with UniXNU
+# at the commit .github/workflows/package.yml pins. This exists to compare a build made strictly by
+# the official orchestration with the one .github/workflows/sheng-kernel.yml makes step by step.
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: OS profile shorthand
+        required: true
+        default: macos-27
+      unixnu_ref:
+        description: UniXNU commit to build with
+        required: true
+        default: 82b847c4ac3f68a57024b3082ffa3a03442defd9
+      chip_id:
+        description: Platform seed (/chosen/unique-chip-id, 8 bytes hex)
+        required: true
+        default: "b714917c"
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      OS_PROFILE: ${{ inputs.os }}
+      UNIXNU_UNIQUE_CHIP_ID: ${{ inputs.chip_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: device
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/checkout@v5
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: UniXNU
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/checkout@v5
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: tools
+        run: |
+          brew install dtc llvm lld cmake mtools ninja glslang shaderc spirv-tools bison pkgconf rustup blacktop/tap/ipsw
+          {
+            echo "$HOME/.cargo/bin"
+            echo "$(brew --prefix llvm)/bin"
+            echo "$(brew --prefix lld)/bin"
+            echo "$(brew --prefix bison)/bin"
+          } >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal --component rust-src
+
+      - name: vendor files and WiFi sources
+        working-directory: device
+        run: |
+          python3 scripts/extract-files.py
+          python3 drivers/Ath12kWifi/tools/fetch-sources.py
+
+      - name: place the Data seed where the release expects it
+        run: |
+          work=UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime
+          mkdir -p "$work"
+          cp device/seed/data.dbr "$work/data.dbr"
+          ls -l "$work"
+
+      - name: package (unixnu release)
+        working-directory: device
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/package.sh --os "$OS_PROFILE" --uefi ../uefi-sheng
+
+      - name: collect
+        if: always()
+        run: |
+          mkdir -p artifacts
+          cp -v UniXNU/out/sheng/*/*/boot/boot.img artifacts/ 2>/dev/null || true
+          cp -v UniXNU/out/sheng/*/*/payload/payload.img artifacts/ 2>/dev/null || true
+          cp -v UniXNU/out/sheng/*/*/kernel/kernel.macho artifacts/ 2>/dev/null || true
+          cp -v UniXNU/out/sheng/*/*/package.manifest.json artifacts/ 2>/dev/null || true
+          ls -l artifacts
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-images
+          path: artifacts/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-logs
+          path: UniXNU/out/sheng/*/*/logs/*.log
+          if-no-files-found: ignore
