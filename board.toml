@@ -271,7 +271,8 @@ CI_ENABLE_METAL_GPU = "0"
 "target" = "macos27"
 "build" = "26C5035r"
 # The Adreno Metal plugin (macos27 build) in the payload's addon, with the boot shim: the kernel writes it to /Library/GPUBundles.
-"gpu_addon" = true
+# Off for this build: the kernel only needs the board kits, and the Metal bridge needs a toolchain the runner lacks.
+"gpu_addon" = false
 # The macOS seed keeps the Data template's owners, so it is made as root (runtime.py prints the command).
 "data_seed_tool" = "scripts/make-macos-data-seed.py"
 "skip_setup" = false
