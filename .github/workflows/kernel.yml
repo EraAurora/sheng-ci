@@ -91,6 +91,10 @@ jobs:
           } >> "$GITHUB_PATH"
           command -v ipsw || echo "::warning::ipsw is missing; the ipsw fetch will fail"
 
+      - name: Extract the pinned vendor files
+        working-directory: device
+        run: python3 scripts/extract-files.py
+
       - name: Select the configuration
         working-directory: UniXNU
         run: |
