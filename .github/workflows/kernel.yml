@@ -115,9 +115,15 @@ jobs:
           ./unixnu fetch --os "$OS_PROFILE"
           ./unixnu ipsw fetch --os "$OS_PROFILE"
 
-      - name: Build the kernel
+      - name: Build the kernel and the payload
         working-directory: UniXNU
-        run: ./unixnu build kernel --os "$OS_PROFILE"
+        # the board kits (kits/sheng) are built by the payload step and the kernel links
+        # against the native_* symbols they provide, so both targets run in one command
+        run: |
+          ./unixnu build kernel payload \
+            --data-ramdisk ../device/seed/data.dbr \
+            --unique-chip-id 0xb714917c \
+            --os "$OS_PROFILE"
 
       - name: Upload the kernel with its symbol map
         if: always()
