@@ -138,6 +138,8 @@ jobs:
             UniXNU/out/**/kernel/kernel.macho
             UniXNU/out/**/kernel/kernel.json
             UniXNU/out/**/kernel/kernel.map.json
+            # the unstripped link output carries the full symbol table
+            UniXNU/out/**/build/xnu/ios-obj/**/mach.*.noctf
           if-no-files-found: ignore
 
       - name: Upload the logs
