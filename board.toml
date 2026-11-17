@@ -268,6 +268,12 @@ CI_ENABLE_METAL_GPU = "0"
 "owned_memory_outside_reserved" = ["0xd0000000:0x10000"]
 
 ["os_overrides"."macos-27.3-26C5035r"."payload"."runtime"]
+# This branch builds the kernel for the PAC debug run only: the board kits still build (the kernel links
+# against their native_* symbols) but the optional runtime addons stay off, because each of them needs a
+# toolchain or source tree the runner does not have.
+"audio_tool" = ""
+"wifi_tool" = ""
+"bluetooth_tool" = ""
 "target" = "macos27"
 "build" = "26C5035r"
 # The Adreno Metal plugin (macos27 build) in the payload's addon, with the boot shim: the kernel writes it to /Library/GPUBundles.
