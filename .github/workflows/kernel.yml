@@ -1,0 +1,139 @@
+name: kernel
+
+# Builds only the XNU kernel for one OS profile on a macOS runner that has Xcode,
+# and uploads it beside its symbol map. No payload, no firmware, no boot image:
+# the device images come from the package workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "OS profile"
+        required: true
+        default: macos-27.3-26C5035r
+      defconfig:
+        description: "Defconfig name"
+        required: true
+        default: sheng_macos_defconfig
+      device_repository:
+        description: "Device repository as owner/name"
+        required: true
+        default: WorldAurora/sheng-ci
+      uefi_repository:
+        description: "UEFI repository as owner/name"
+        required: true
+        default: UniXNU/uefi-sheng
+      xcode:
+        description: "Xcode version of the macos-26 image"
+        required: true
+        default: "26.6"
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  kernel:
+    runs-on: macos-26
+    timeout-minutes: 240
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
+      OS_PROFILE: ${{ inputs.os }}
+      DEFCONFIG: ${{ inputs.defconfig }}
+      UNIXNU_UEFI: ${{ github.workspace }}/uefi-sheng
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@v5
+        with:
+          repository: UniXNU/UniXNU
+          # pinned to the commit this device repository was merged against: the kits under
+          # kits/sheng and the kernel sources have to come from the same state
+          ref: dbe401072be6525e79b179fb399dc4556a4aec6c
+          path: UniXNU
+          persist-credentials: false
+
+      - name: Check out the device repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.device_repository }}
+          path: device
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Check out the firmware repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.uefi_repository }}
+          path: uefi-sheng
+          persist-credentials: false
+
+      - name: Install host tools
+        run: |
+          for formula in dtc llvm lld mtools glslang shaderc spirv-tools rustup bison; do
+            brew list --versions "$formula" >/dev/null 2>&1 || brew install "$formula"
+          done
+          brew list --versions ipsw >/dev/null 2>&1 || brew install blacktop/tap/ipsw || true
+          brew link --overwrite blacktop/tap/ipsw >/dev/null 2>&1 || true
+          {
+            echo "$HOME/.cargo/bin"
+            for formula in llvm lld bison glslang shaderc spirv-tools mtools dtc ipsw; do
+              prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+              [ -n "$prefix" ] && [ -d "$prefix/bin" ] && echo "$prefix/bin"
+            done
+          } >> "$GITHUB_PATH"
+          command -v ipsw || echo "::warning::ipsw is missing; the ipsw fetch will fail"
+
+      - name: Select the configuration
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig "$DEFCONFIG" -D ../device --os "$OS_PROFILE"
+          ./unixnu status --os "$OS_PROFILE"
+
+      - name: Cache the fetched sources
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/feeds
+          key: feeds-${{ runner.os }}-${{ hashFiles('device/unixnu.lock') }}-4
+
+      - name: Cache the IPSW members
+        uses: actions/cache@v4
+        with:
+          path: UniXNU/out/ipsw
+          key: ipsw-${{ runner.os }}-${{ inputs.os }}-4
+
+      - name: Fetch sources and the IPSW members
+        working-directory: UniXNU
+        run: |
+          ./unixnu fetch --os "$OS_PROFILE"
+          ./unixnu ipsw fetch --os "$OS_PROFILE"
+
+      - name: Build the kernel
+        working-directory: UniXNU
+        run: ./unixnu build kernel --os "$OS_PROFILE"
+
+      - name: Upload the kernel with its symbol map
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: |
+            UniXNU/out/**/kernel/kernel.macho
+            UniXNU/out/**/kernel/kernel.json
+            UniXNU/out/**/kernel/kernel.map.json
+          if-no-files-found: ignore
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: UniXNU/out/**/logs/*.log
+          if-no-files-found: ignore
