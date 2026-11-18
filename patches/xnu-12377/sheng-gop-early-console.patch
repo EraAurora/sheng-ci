@@ -8,7 +8,7 @@
  #include <sys/codesign.h>
  #include <sys/kdebug.h>
  #include <sys/random.h>
-@@ -703,6 +704,47 @@
+@@ -703,7 +704,73 @@
   * Now running in a thread.  Kick off other services,
   * invoke user bootstrap, enter pageout loop.
   */
@@ -18,7 +18,9 @@
 + * console.  Without this the first kprintf lands in
 + * AppleM2ScalerCSCDriver with an unstarted provider and panics.
 + */
-+static void
++static void sheng_watchdog_clear(void);
++
+ static void
 +sheng_gop_console(void)
 +{
 +	static PE_Video video;
@@ -26,6 +28,7 @@
 +
 +	if (!PE_parse_boot_argn("gop-base", &base, sizeof(base)) || base == 0) {
 +		initialize_screen(NULL, kPEAcquireScreen);
++		sheng_watchdog_clear();
 +		return;
 +	}
 +	PE_parse_boot_argn("gop-stride", &stride, sizeof(stride));
@@ -34,6 +37,7 @@
 +	PE_parse_boot_argn("gop-depth", &depth, sizeof(depth));
 +	if (stride == 0 || width == 0 || height == 0) {
 +		initialize_screen(NULL, kPEAcquireScreen);
++		sheng_watchdog_clear();
 +		return;
 +	}
 +	if (depth == 0) {
@@ -51,12 +55,34 @@
 +	PE_initialize_console(&video, kPEAcquireScreen);
 +	kprintf("sheng: gop console %llux%llu stride %llu at %llx\n",
 +	    width, height, stride, base);
++	sheng_watchdog_clear();
 +}
 +
- static void
++/*
++ * sheng: stop the short watchdog the firmware armed at ReadyToBoot, so a
++ * kernel that does start is not cut short.  Gated by wdt-clear=1.
++ */
++static void
++sheng_watchdog_clear(void)
++{
++	uint32_t clear = 0;
++	vm_offset_t base;
++
++	if (!PE_parse_boot_argn("wdt-clear", &clear, sizeof(clear)) || clear == 0) {
++		return;
++	}
++	base = ml_io_map(0x17C10000, 0x1000);
++	if (base != 0) {
++		*(volatile uint32_t *)(base + 0x04) = 0;        /* WDT0_EN */
++		kprintf("sheng: apcs watchdog disabled\n");
++	}
++}
++
++static void
  kernel_bootstrap_thread(void)
  {
-@@ -823,7 +865,7 @@
+ 	processor_t processor = current_processor();
+@@ -823,7 +890,7 @@
  	/*
  	 * This will start displaying progress to the user, start as early as possible
  	 */
