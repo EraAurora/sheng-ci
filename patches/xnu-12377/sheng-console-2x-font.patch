@@ -1,0 +1,90 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -1413,6 +1413,10 @@
+ 	}
+ }
+ 
++/* sheng: text metrics follow the console scale so panic output stays readable. */
++static unsigned int             vc_cell_width  = ISO_CHAR_WIDTH;
++static unsigned int             vc_cell_height = ISO_CHAR_HEIGHT;
++
+ static void
+ vc_paint_char_8(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+     __unused unsigned char ch_previous, __unused int attrs_previous)
+@@ -1613,7 +1617,51 @@
+ 	}
+ }
+ 
++
++/*
++ * sheng: draw every glyph pixel as a scale x scale block so the console text
++ * grows with vc_uiscale (the panic screen is unreadable at 8x16 on a 12.4"
++ * panel). Only the 32-bit path is used on this framebuffer.
++ */
+ static void
++vc_paint_char_32_scaled(unsigned int xx, unsigned int yy, unsigned char ch, int attrs)
++{
++	uint32_t *theChar;
++	unsigned int sx = vc_cell_width / ISO_CHAR_WIDTH;
++	unsigned int sy = vc_cell_height / ISO_CHAR_HEIGHT;
++	uint32_t *origin;
++	unsigned int i, r, x, c;
++
++	if (vc_rendered_font) {
++		theChar = (uint32_t *)(vc_rendered_font + (ch * vc_rendered_char_size));
++	} else {
++		vc_render_char(ch, vc_rendered_char, 32);
++		theChar = (uint32_t *)(vc_rendered_char);
++	}
++	origin = (uint32_t *)(vinfo.v_baseaddr +
++	    (yy * vc_cell_height * vinfo.v_rowbytes) +
++	    (xx * vc_cell_width * 4));
++
++	for (i = 0; i < ISO_CHAR_HEIGHT; i++) {
++		uint32_t *src = theChar + i * ISO_CHAR_WIDTH;
++		for (r = 0; r < sy; r++) {
++			uint32_t *store = (uint32_t *)((unsigned char *)origin +
++			    (i * sy + r) * vinfo.v_rowbytes);
++			for (x = 0; x < ISO_CHAR_WIDTH; x++) {
++				uint32_t val = *src++;
++				if (attrs & ATTR_REVERSE) {
++					val = ~val;
++				}
++				val = (vc_color_back & ~val) | (vc_color_fore & val);
++				for (c = 0; c < sx; c++) {
++					*store++ = val;
++				}
++			}
++		}
++	}
++}
++
++static void
+ vc_paint_char(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
+     unsigned char ch_previous, int attrs_previous)
+ {
+@@ -1631,8 +1679,12 @@
+ 		break;
+ 	case 30:
+ 	case 32:
+-		vc_paint_char_32(xx, yy, ch, attrs, ch_previous,
+-		    attrs_previous);
++		if (vc_uiscale > 1) {
++			vc_paint_char_32_scaled(xx, yy, ch, attrs);
++		} else {
++			vc_paint_char_32(xx, yy, ch, attrs, ch_previous,
++			    attrs_previous);
++		}
+ 		break;
+ 	}
+ }
+@@ -1835,9 +1887,6 @@
+ static void *                   vc_saveunder;
+ static vm_size_t                vc_saveunder_len;
+ static int8_t                   vc_uiscale = 1;
+-/* sheng: text metrics follow the console scale so panic output stays readable. */
+-static unsigned int             vc_cell_width  = ISO_CHAR_WIDTH;
+-static unsigned int             vc_cell_height = ISO_CHAR_HEIGHT;
+ vc_progress_user_options        vc_progress_options;
+ vc_progress_user_options        vc_user_options;
+ 

@@ -21,3 +21,4 @@ zzzzzzzzzzz-sheng-edge-matrix.patch
 zzzzzzzzzzz-sheng-pac-debug.patch
 sheng-pac-kext-dump.patch
 sheng-early-video-console.patch
+sheng-console-2x-font.patch
