@@ -8,7 +8,7 @@
  #include <sys/codesign.h>
  #include <sys/kdebug.h>
  #include <sys/random.h>
-@@ -703,6 +704,47 @@
+@@ -703,6 +704,49 @@
   * Now running in a thread.  Kick off other services,
   * invoke user bootstrap, enter pageout loop.
   */
@@ -49,6 +49,8 @@
 +	video.v_scale    = kPEScaleFactor2x;
 +	PE_state.video = video;
 +	PE_initialize_console(&video, kPEAcquireScreen);
++	/* Nothing in this kernel routes kprintf to the video console by itself. */
++	(void)switch_to_video_console();
 +	kprintf("sheng: gop console %llux%llu stride %llu at %llx\n",
 +	    width, height, stride, base);
 +}
@@ -56,7 +58,7 @@
  static void
  kernel_bootstrap_thread(void)
  {
-@@ -823,7 +865,7 @@
+@@ -823,7 +867,7 @@
  	/*
  	 * This will start displaying progress to the user, start as early as possible
  	 */
