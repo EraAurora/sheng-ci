@@ -1,0 +1,28 @@
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -8,6 +8,7 @@
+ #include <mach/vm_param.h>
+ #include <pexpert/protos.h>
+ #include <pexpert/pexpert.h>
++#include <console/serial_protos.h>
+ #include <pexpert/boot.h>
+ #include <pexpert/device_tree.h>
+ #include <pexpert/pe_images.h>
+@@ -477,6 +478,17 @@
+ 		SecureDTInit(PE_state.deviceTreeHead, PE_state.deviceTreeSize);
+ 		pe_identify_machine(boot_args_ptr);
+ 	} else {
++		/*
++		 * sheng: the VM is up and no kext has run yet, so hand the linear
++		 * framebuffer from the boot arguments to the kernel console before
++		 * IOKit can install anything of its own.
++		 */
++		if (PE_state.video.v_baseAddr != 0 && PE_state.video.v_depth != 0) {
++			PE_Video video = PE_state.video;
++			video.v_baseAddr |= 1;          /* the booter passes a physical address */
++			initialize_screen(&video, kPEAcquireScreen);
++			(void)switch_to_video_console();
++		}
+ 		pe_arm_init_interrupts(args);
+ 	}
+ 
