@@ -19,4 +19,4 @@ sheng-appsync-runtime.patch
 sheng-appsync-user-trust.patch
 zzzzzzzzzzz-sheng-edge-matrix.patch
 zzzzzzzzzzz-sheng-pac-debug.patch
-sheng-early-video-console.patch
+sheng-gop-early-console.patch
