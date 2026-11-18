@@ -1,0 +1,23 @@
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1,4 +1,6 @@
+ #include <kern/boot_progress.h>
++
++extern void kmod_dump_log(vm_offset_t *addr, unsigned int cnt, boolean_t doUnslide);
+ /*
+  * Copyright (c) 2012-2023 Apple Inc. All rights reserved.
+  *
+@@ -2976,6 +2978,13 @@
+ 					}
+ 				}
+ 				printf("PACDBG x21=%lx vt=%lx slotD8=%lx\n", pac_obj, pac_vt, pac_slot);
++				{
++					vm_offset_t pac_frames[2];
++					pac_frames[0] = (vm_offset_t)pac_state->pc;
++					pac_frames[1] = (vm_offset_t)pac_state->lr;
++					printf("PACDBG pc=%lx lr=%lx\n", pac_frames[0], pac_frames[1]);
++					kmod_dump_log(pac_frames, 2, TRUE);
++				}
+ 			}
+ 		} else if (ARM64_INSTR_IS_RETAx(instr)) {
+ 			snprintf(msg, sizeof(msg), RETAX_MSG_FMT, key_str);
