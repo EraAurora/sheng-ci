@@ -7,16 +7,33 @@
  /*
   * Copyright (c) 2012-2023 Apple Inc. All rights reserved.
   *
-@@ -2976,6 +2978,13 @@
+@@ -2976,6 +2978,30 @@
  					}
  				}
  				printf("PACDBG x21=%lx vt=%lx slotD8=%lx\n", pac_obj, pac_vt, pac_slot);
 +				{
-+					vm_offset_t pac_frames[2];
-+					pac_frames[0] = (vm_offset_t)pac_state->pc;
-+					pac_frames[1] = (vm_offset_t)pac_state->lr;
-+					printf("PACDBG pc=%lx lr=%lx\n", pac_frames[0], pac_frames[1]);
-+					kmod_dump_log((unsigned long *)pac_frames, 2, 1);
++					vm_offset_t pac_frames[9];
++					uint64_t pac_fp = pac_state->fp;
++					unsigned int pac_n = 0, pac_i;
++					pac_frames[pac_n++] = (vm_offset_t)pac_state->pc;
++					pac_frames[pac_n++] = (vm_offset_t)pac_state->lr;
++					for (pac_i = 0; pac_i < 6 && pac_fp != 0; pac_i++) {
++						uint64_t *pac_frame;
++						if ((pac_fp & 7) || pac_fp < 0xfffffff000000000ULL) {
++							break;
++						}
++						pac_frame = (uint64_t *)(uintptr_t)pac_fp;
++						if (pac_frame[1] < 0xfffffff000000000ULL) {
++							break;
++						}
++						pac_frames[pac_n++] = (vm_offset_t)pac_frame[1];
++						if (pac_frame[0] <= pac_fp) {
++							break;
++						}
++						pac_fp = pac_frame[0];
++					}
++					printf("PACDBG frames=%u\n", pac_n);
++					kmod_dump_log((unsigned long *)pac_frames, pac_n, 1);
 +				}
  			}
  		} else if (ARM64_INSTR_IS_RETAx(instr)) {
