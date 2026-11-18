@@ -1,6 +1,15 @@
 --- a/osfmk/console/video_console.c
 +++ b/osfmk/console/video_console.c
-@@ -1413,6 +1413,10 @@
+@@ -1336,7 +1336,7 @@
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (vc_cell_height >> 2);
+ 	rowline = vinfo.v_rowscanbytes >> 2;
+ 	rowlongs = vinfo.v_rowbytes >> 2;
+ 
+@@ -1411,6 +1411,10 @@
  	}
  }
  
@@ -11,7 +20,40 @@
  static void
  vc_paint_char_8(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
      __unused unsigned char ch_previous, __unused int attrs_previous)
-@@ -1613,7 +1617,51 @@
+@@ -1426,8 +1430,8 @@
+ 		theChar = (uint32_t*)(vc_rendered_char);
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH));
++	    (yy * vc_cell_height * vinfo.v_rowbytes) +
++	    (xx * vc_cell_width));
+ 
+ 	if (!attrs) {
+ 		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attr? FLY !*/
+@@ -1494,8 +1498,8 @@
+ 		theChar = (uint32_t*)(vc_rendered_char);
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH * 2));
++	    (yy * vc_cell_height * vinfo.v_rowbytes) +
++	    (xx * vc_cell_width * 2));
+ 
+ 	if (!attrs) {
+ 		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
+@@ -1564,8 +1568,8 @@
+ 		theCharPrevious = NULL;
+ 	}
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx * ISO_CHAR_WIDTH * 4));
++	    (yy * vc_cell_height * vinfo.v_rowbytes) +
++	    (xx * vc_cell_width * 4));
+ 
+ 	if (!attrs) {
+ 		for (i = 0; i < ISO_CHAR_HEIGHT; i++) {         /* No attrs ? FLY ! */
+@@ -1611,7 +1615,51 @@
  	}
  }
  
@@ -63,7 +105,7 @@
  vc_paint_char(unsigned int xx, unsigned int yy, unsigned char ch, int attrs,
      unsigned char ch_previous, int attrs_previous)
  {
-@@ -1631,8 +1679,12 @@
+@@ -1629,8 +1677,12 @@
  		break;
  	case 30:
  	case 32:
@@ -78,13 +120,56 @@
  		break;
  	}
  }
-@@ -1835,9 +1887,6 @@
- static void *                   vc_saveunder;
- static vm_size_t                vc_saveunder_len;
- static int8_t                   vc_uiscale = 1;
--/* sheng: text metrics follow the console scale so panic output stays readable. */
--static unsigned int             vc_cell_width  = ISO_CHAR_WIDTH;
--static unsigned int             vc_cell_height = ISO_CHAR_HEIGHT;
- vc_progress_user_options        vc_progress_options;
- vc_progress_user_options        vc_user_options;
+@@ -1708,8 +1760,8 @@
+ 	}
  
+ 	where = (uint32_t*)(vinfo.v_baseaddr +
+-	    (yy * ISO_CHAR_HEIGHT * vinfo.v_rowbytes) +
+-	    (xx /** ISO_CHAR_WIDTH*/ * vinfo.v_depth));
++	    (yy * vc_cell_height * vinfo.v_rowbytes) +
++	    (xx * vc_cell_width * vinfo.v_depth));
+ 	for (line = 0; line < ISO_CHAR_HEIGHT; line++) {
+ 		switch (vinfo.v_depth) {
+ 		case 8:
+@@ -1740,7 +1792,7 @@
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (vc_cell_height >> 2);
+ 	rowline = vinfo.v_rowbytes >> 2;
+ 	rowscanline = vinfo.v_rowscanbytes >> 2;
+ 
+@@ -1774,7 +1826,7 @@
+ 		return;
+ 	}
+ 
+-	linelongs = vinfo.v_rowbytes * (ISO_CHAR_HEIGHT >> 2);
++	linelongs = vinfo.v_rowbytes * (vc_cell_height >> 2);
+ 	rowline = vinfo.v_rowbytes >> 2;
+ 	rowscanline = vinfo.v_rowscanbytes >> 2;
+ 
+@@ -2782,15 +2834,20 @@
+ static void
+ vc_initialize(__unused struct vc_info * vinfo_p)
+ {
+-	vinfo.v_rows = vinfo.v_height / ISO_CHAR_HEIGHT;
+-	vinfo.v_columns = vinfo.v_width / ISO_CHAR_WIDTH;
+-	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
+ 	vc_uiscale = vinfo.v_scale;
+ 	if (vc_uiscale > kMaxProgressData) {
+ 		vc_uiscale = kMaxProgressData;
+ 	} else if (!vc_uiscale) {
+ 		vc_uiscale = 1;
+ 	}
++	if (vc_uiscale > 2) {
++		vc_uiscale = 2;
++	}
++	vc_cell_width = ISO_CHAR_WIDTH * (unsigned int)vc_uiscale;
++	vc_cell_height = ISO_CHAR_HEIGHT * (unsigned int)vc_uiscale;
++	vinfo.v_rows = vinfo.v_height / vc_cell_height;
++	vinfo.v_columns = vinfo.v_width / vc_cell_width;
++	vinfo.v_rowscanbytes = ((vinfo.v_depth + 7) / 8) * vinfo.v_width;
+ }
+ 
+ void
